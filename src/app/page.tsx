@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   useEffect,
   useRef,
@@ -20,8 +21,6 @@ type EditorRect = {
 
 type SidebarPanel = "explorer" | "search" | "source" | "extensions" | "settings";
 type ColorTheme = "earthy" | "midnight" | "ember";
-type ProjectTab = "overview" | "preview" | "stack";
-
 type PaletteCommand = {
   id: string;
   label: string;
@@ -35,6 +34,8 @@ type ProjectInfo = {
   detail: string;
   file: string;
   tags: string[];
+  url?: string;
+  linkLabel?: string;
 };
 
 type WorkspaceFile = {
@@ -44,6 +45,139 @@ type WorkspaceFile = {
   kind: "tsx" | "md";
   project?: ProjectInfo;
 };
+
+function AmbientCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) {
+      return;
+    }
+
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const particles = Array.from({ length: 22 }, (_, index) => ({
+      angle: (index / 22) * Math.PI * 2,
+      phase: index * 1.71,
+      radius: 0.34 + (index % 5) * 0.13,
+      size: index % 6 === 0 ? 2 : 1.15,
+    }));
+    let width = 0;
+    let height = 0;
+    let elapsed = 0;
+    let previousFrame = 0;
+    let frameId = 0;
+    let isVisible = true;
+    const sage = getComputedStyle(canvas).getPropertyValue("--sage").trim() || "#bec99e";
+    const clay = getComputedStyle(canvas).getPropertyValue("--clay").trim() || "#d89068";
+
+    const paint = () => {
+      context.clearRect(0, 0, width, height);
+      const points = particles.map((particle) => {
+        const drift = Math.sin(elapsed * 0.22 + particle.phase) * 0.12;
+        const angle = particle.angle + elapsed * 0.035 + drift;
+        return {
+          x: width * 0.76 + Math.cos(angle) * width * 0.19 * particle.radius,
+          y: height * 0.52 + Math.sin(angle) * height * 0.39 * particle.radius,
+          size: particle.size,
+        };
+      });
+
+      context.lineWidth = 0.8;
+      for (let first = 0; first < points.length; first += 1) {
+        for (let second = first + 1; second < points.length; second += 1) {
+          const dx = points[first].x - points[second].x;
+          const dy = points[first].y - points[second].y;
+          const distance = Math.hypot(dx, dy);
+          if (distance < 48) {
+            context.globalAlpha = (1 - distance / 48) * 0.34;
+            context.strokeStyle = sage;
+            context.beginPath();
+            context.moveTo(points[first].x, points[first].y);
+            context.lineTo(points[second].x, points[second].y);
+            context.stroke();
+          }
+        }
+      }
+
+      points.forEach((point, index) => {
+        context.globalAlpha = index % 7 === 0 ? 0.8 : 0.48;
+        context.fillStyle = index === 7 ? clay : sage;
+        context.beginPath();
+        context.arc(point.x, point.y, point.size, 0, Math.PI * 2);
+        context.fill();
+      });
+      context.globalAlpha = 1;
+    };
+
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      width = bounds.width;
+      height = bounds.height;
+      canvas.width = Math.max(1, Math.round(width * pixelRatio));
+      canvas.height = Math.max(1, Math.round(height * pixelRatio));
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      paint();
+    };
+
+    const animate = (timestamp: number) => {
+      if (!isVisible || document.hidden || motionPreference.matches) {
+        frameId = 0;
+        previousFrame = 0;
+        return;
+      }
+
+      if (previousFrame) {
+        elapsed += Math.min((timestamp - previousFrame) / 1000, 0.05);
+      }
+      previousFrame = timestamp;
+      paint();
+      frameId = window.requestAnimationFrame(animate);
+    };
+
+    const syncAnimation = () => {
+      if (motionPreference.matches || !isVisible || document.hidden) {
+        if (frameId) {
+          window.cancelAnimationFrame(frameId);
+          frameId = 0;
+        }
+        previousFrame = 0;
+        paint();
+      } else if (!frameId) {
+        frameId = window.requestAnimationFrame(animate);
+      }
+    };
+
+    const visibilityObserver = new IntersectionObserver(([entry]) => {
+      isVisible = entry.isIntersecting;
+      syncAnimation();
+    }, { root: canvas.closest(".editor-content"), threshold: 0.01 });
+    const handleVisibilityChange = () => syncAnimation();
+
+    resize();
+    visibilityObserver.observe(canvas);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    motionPreference.addEventListener("change", syncAnimation);
+    syncAnimation();
+
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
+
+    return () => {
+      visibilityObserver.disconnect();
+      resizeObserver.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      motionPreference.removeEventListener("change", syncAnimation);
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, []);
+
+  return <canvas aria-hidden="true" className="ambient-canvas" ref={canvasRef} />;
+}
 
 const panelDetails: Record<SidebarPanel, { title: string; icon: string }> = {
   explorer: { title: "EXPLORER", icon: "▤" },
@@ -209,18 +343,141 @@ function ProjectPreview({ project }: { project: ProjectInfo }) {
   );
 }
 
+function DiaryVisualConcept() {
+  return (
+    <figure className="diary-concept" aria-labelledby="diary-concept-caption">
+      <div className="diary-concept-board">
+        <div className="diary-concept-header">
+          <div className="diary-concept-window-controls" aria-hidden="true"><i /><i /><i /></div>
+          <span>günlük <i>/</i> görsel kimlik</span>
+          <span className="diary-concept-header-note">TASARIM SEÇKİSİ <b aria-hidden="true">✳</b></span>
+        </div>
+        <div className="diary-concept-grid">
+          <section className="diary-concept-brand" aria-label="Günlük marka dili">
+            <div className="diary-concept-wordmark">günlük<span aria-hidden="true">✳</span></div>
+            <span className="diary-concept-eyebrow">KENDİNE AİT KÜÇÜK BİR ALAN</span>
+            <p>Kendine dönmek için<br />küçük bir alan.</p>
+            <div className="diary-concept-paper">
+              <span>BUGÜNÜN SAYFASI <i>22 EKİM · PERŞEMBE</i></span>
+              <strong>Bugün nasıldı?</strong>
+              <div aria-hidden="true" />
+              <div aria-hidden="true" />
+              <small>Bir cümle sadece sana ait kalsın.</small>
+            </div>
+          </section>
+          <div className="diary-concept-system">
+            <section className="diary-concept-palette" aria-labelledby="diary-palette-title">
+              <h3 id="diary-palette-title">Renk paleti <span>01 — 05</span></h3>
+              <div className="diary-concept-swatches">
+                <div><i style={{ backgroundColor: "#f4f4f3" }} /><span>Kâğıt<small>#F4F4F3</small></span></div>
+                <div><i style={{ backgroundColor: "#faf6ef" }} /><span>Sayfa<small>#FAF6EF</small></span></div>
+                <div><i style={{ backgroundColor: "#68432f" }} /><span>Kahve<small>#68432F</small></span></div>
+                <div><i style={{ backgroundColor: "#d8deea" }} /><span>Çizgi<small>#D8DEEA</small></span></div>
+                <div><i style={{ backgroundColor: "#efaaa0" }} /><span>İz<small>#EFAAA0</small></span></div>
+              </div>
+            </section>
+            <section className="diary-concept-type" aria-labelledby="diary-type-title">
+              <h3 id="diary-type-title">Tipografi <span>MONOSPACE</span></h3>
+              <div className="diary-concept-type-sample">
+                <strong>Bugün nasıldı?</strong>
+                <span>Başlık · kalın / 24</span>
+              </div>
+              <div className="diary-concept-type-sample diary-concept-type-sample--body">
+                <span>Kendine ait bir cümle.</span>
+                <span>Arayüz · normal / 14</span>
+              </div>
+            </section>
+          </div>
+        </div>
+        <div className="diary-concept-footer">
+          <span>TASARIM İLKESİ</span>
+          <span>Kâğıt dokusu · sıcak tonlar · sade tipografi</span>
+        </div>
+      </div>
+      <figcaption className="diary-concept-caption" id="diary-concept-caption">
+        <span className="code-comment">{"// GÜNLÜK · RENK, TİPOGRAFİ VE ÜRÜN DİLİ"}</span>
+        Günlük’ün arayüzünden esinlenen görsel kimlik seçkisi.
+      </figcaption>
+    </figure>
+  );
+}
+
+function ClockVisualConcept() {
+  return (
+    <figure className="clock-concept" aria-labelledby="clock-concept-caption">
+      <div className="clock-concept-board">
+        <div className="clock-concept-header">
+          <div className="diary-concept-window-controls" aria-hidden="true"><i /><i /><i /></div>
+          <span>vakit <i>/</i> arayüz dili</span>
+          <span className="clock-concept-header-note">SAAT &amp; KRONOMETRE <b aria-hidden="true">◷</b></span>
+        </div>
+        <div className="clock-concept-grid">
+          <section className="clock-concept-screen" aria-label="Vakit saat ekranı konsepti">
+            <div className="clock-concept-screen-top">
+              <span>YEREL SAAT</span>
+              <span className="clock-concept-fullscreen" aria-hidden="true">⛶</span>
+            </div>
+            <Image className="clock-concept-time" src="/vakit-clock-display.png" alt="Vakit uygulamasının gerçek saat göstergesi" width={569} height={138} sizes="(max-width: 650px) 90vw, 420px" unoptimized />
+            <div className="clock-concept-controls" aria-hidden="true">
+              <span className="clock-concept-mode clock-concept-mode--active">◷</span>
+              <span className="clock-concept-mode">◴</span>
+              <span className="clock-concept-mode">⏱</span>
+              <span className="clock-concept-mode">◎</span>
+            </div>
+            <span className="clock-concept-screen-caption">SAAT · SAYAÇ · KRONOMETRE · DÜNYA SAATLERİ</span>
+          </section>
+          <div className="clock-concept-system">
+            <section className="clock-concept-palette" aria-labelledby="clock-palette-title">
+              <h3 id="clock-palette-title">Renk paleti <span>01 — 05</span></h3>
+              <div className="clock-concept-swatches">
+                <div><i style={{ backgroundColor: "#050505" }} /><span>Gece<small>#050505</small></span></div>
+                <div><i style={{ backgroundColor: "#211f1f" }} /><span>Ekran<small>#211F1F</small></span></div>
+                <div><i style={{ backgroundColor: "#92121a" }} /><span>Bordo<small>#92121A</small></span></div>
+                <div><i style={{ backgroundColor: "#08a7de" }} /><span>Mavi<small>#08A7DE</small></span></div>
+                <div><i style={{ backgroundColor: "#98a2b3" }} /><span>Kontur<small>#98A2B3</small></span></div>
+              </div>
+            </section>
+            <section className="clock-concept-type" aria-labelledby="clock-type-title">
+              <h3 id="clock-type-title">Tipografi <span>DISPLAY / SANS</span></h3>
+              <div className="clock-concept-type-sample">
+                <strong>01:26:08</strong>
+                <span>Saat · kalın / eğik</span>
+              </div>
+              <div className="clock-concept-type-sample clock-concept-type-sample--body">
+                <span>Saat · Sayaç · Kronometre</span>
+                <span>Kontroller · sade / net</span>
+              </div>
+            </section>
+          </div>
+        </div>
+        <div className="clock-concept-footer">
+          <span>TASARIM İLKESİ</span>
+          <span>Odakta zaman · net kontroller · tam ekran</span>
+        </div>
+      </div>
+      <figcaption className="clock-concept-caption" id="clock-concept-caption">
+        <span className="code-comment">{"// VAKİT · RENK, TİPOGRAFİ VE ARAYÜZ DİLİ"}</span>
+        Vakit’in saat, sayaç ve kronometre arayüzünden görsel seçki.
+      </figcaption>
+    </figure>
+  );
+}
+
 const projects: ProjectInfo[] = [
   {
     name: "Saat",
     detail: "Zamanı kendine göre yaşa",
     file: "saat.tsx",
     tags: ["Teknoloji bilgisi bekleniyor"],
+    url: "https://vakit.vercel.app/",
+    linkLabel: "Vakit’i ziyaret et",
   },
   {
     name: "Günlük",
     detail: "Kendine ait küçük bir alan",
     file: "gunluk.tsx",
     tags: ["Next.js", ".NET", "React Native"],
+    url: "https://gunluk-gunce.vercel.app/",
   },
   {
     name: "GaziÇark",
@@ -254,113 +511,7 @@ const workspaceFiles: WorkspaceFile[] = [
   })),
 ];
 
-const introLines = [
-  <><span className="code-comment">{"// İrem Nur Kuş · portfolio"}</span></>,
-  <><span className="code-purple">const</span> <span className="code-blue">developer</span> = {"{"}</>,
-  <>  name: <span className="code-green">&quot;İrem Nur Kuş&quot;</span>,</>,
-  <>  focus: [<span className="code-green">&quot;web&quot;</span>, <span className="code-green">&quot;mobile&quot;</span>],</>,
-  <>  approach: <span className="code-green">&quot;thoughtful by design&quot;</span>,</>,
-  <>{`};`}</>,
-  <><span className="code-purple">const</span> <span className="code-blue">projects</span> = <span className="code-orange">await</span> loadProjects();</>,
-  <><span className="code-purple">export default</span> <span className="code-orange">function</span> <span className="code-yellow">Portfolio</span>() {"{"}</>,
-  <>  <span className="code-purple">return</span> &lt;<span className="code-blue">CreativeWork</span> /&gt;;</>,
-  <>{`}`}</>,
-];
-
-function OpeningSequence({
-  isClosing,
-  onSkip,
-  frameStyle,
-  isResized,
-  resizeHandles,
-}: {
-  isClosing: boolean;
-  onSkip: () => void;
-  frameStyle?: CSSProperties;
-  isResized: boolean;
-  resizeHandles: React.ReactNode;
-}) {
-  return (
-    <div
-      className={`opening-sequence${isClosing ? " opening-sequence--closing" : ""}${isResized ? " opening-sequence--user-sized" : ""}`}
-      role="status"
-      aria-label="Portföy hazırlanıyor"
-      style={frameStyle}
-    >
-      <div className="opening-window-bar">
-        <div className="titlebar-brand">
-          <span className="app-mark" aria-hidden="true">&lt;/&gt;</span>
-          <span>irem-nur-kus</span>
-        </div>
-        <div className="opening-window-title">portfolio — workspace</div>
-        <div className="opening-titlebar-actions">
-          <button className="skip-intro" type="button" onClick={onSkip}>
-            Animasyonu geç <span aria-hidden="true">↗</span>
-          </button>
-          <div className="window-lights" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
-      </div>
-      <div className="opening-editor">
-        <aside className="opening-activity" aria-hidden="true">
-          <span className="activity-glyph activity-glyph--active">▤</span>
-          <span className="activity-glyph">⌕</span>
-          <span className="activity-glyph">⌘</span>
-          <span className="activity-glyph">◌</span>
-        </aside>
-        <aside className="opening-explorer" aria-hidden="true">
-          <div className="opening-explorer-heading">EXPLORER</div>
-          <div className="opening-explorer-root">⌄ &nbsp; IREM-PORTFOLIO</div>
-          <div className="opening-explorer-row">⌄ &nbsp; ▰ &nbsp; about</div>
-          <div className="opening-explorer-row opening-explorer-row--nested">M &nbsp; about.md</div>
-          <div className="opening-explorer-row">⌄ &nbsp; ▰ &nbsp; projects</div>
-          <div className="opening-explorer-row opening-explorer-row--nested">TS &nbsp; index.tsx</div>
-        </aside>
-        <div className="opening-workbench">
-          <div className="opening-file">
-            <span className="file-mark">TS</span>
-            <span>index.tsx</span>
-            <span className="tab-close" aria-hidden="true">×</span>
-          </div>
-          <div className="opening-breadcrumbs">
-            <span>projects</span><span>›</span><span className="file-mark">TS</span><span>index.tsx</span><span>›</span><span>Portfolio</span>
-          </div>
-          <div className="opening-code">
-            <div className="code-lines" aria-hidden="true">
-              {introLines.map((line, index) => (
-                <div className="code-line" key={index}>
-                  <span className="line-number">{String(index + 1).padStart(2, "0")}</span>
-                  <span
-                    className="line-typing"
-                    style={{ animationDelay: `${index * 0.39}s` }}
-                  >
-                    {line}
-                  </span>
-                </div>
-              ))}
-              <span className="code-caret" aria-hidden="true" />
-            </div>
-            <div className="opening-description">
-              <span className="code-comment">{"// MERHABA, BEN İREM"}</span>
-              <span>Fikirleri <span className="code-green">koda,</span> kodu <span className="code-orange">ürüne.</span></span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="opening-status">
-        <div className="statusbar-left"><span className="status-remote">◉</span><span>portfolio</span><span>⑂ main</span></div>
-        <div className="statusbar-right"><span><i /> Building something thoughtful</span><span>UTF-8</span><span>TSX</span></div>
-      </div>
-      {resizeHandles}
-    </div>
-  );
-}
-
 export default function Home() {
-  const [openingPhase, setOpeningPhase] = useState<"intro" | "transition" | "done">("intro");
   const [editorRect, setEditorRect] = useState<EditorRect | null>(null);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel | null>("explorer");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -368,8 +519,8 @@ export default function Home() {
   const [projectsFolderOpen, setProjectsFolderOpen] = useState(true);
   const [workspaceFolderOpen, setWorkspaceFolderOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(false);
-  const [activeFile, setActiveFile] = useState("index.tsx");
-  const [openFiles, setOpenFiles] = useState(["index.tsx"]);
+  const [activeFile, setActiveFile] = useState("about.md");
+  const [openFiles, setOpenFiles] = useState(["about.md"]);
   const [searchQuery, setSearchQuery] = useState("");
   const [extensionQuery, setExtensionQuery] = useState("");
   const [stagedFiles, setStagedFiles] = useState<string[]>([]);
@@ -379,9 +530,9 @@ export default function Home() {
   const [editorFontSize, setEditorFontSize] = useState(13);
   const [lineNumbersVisible, setLineNumbersVisible] = useState(true);
   const [colorTheme, setColorTheme] = useState<ColorTheme>("earthy");
-  const [projectTab, setProjectTab] = useState<ProjectTab>("overview");
   const [statusMessage, setStatusMessage] = useState("Fikirden ürüne, özenle.");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const editorContentRef = useRef<HTMLDivElement>(null);
   const resizeStart = useRef<{
     edge: ResizeEdge;
     pointerX: number;
@@ -478,7 +629,6 @@ export default function Home() {
     setActiveFile(fileId);
     setOpenFiles((current) => current.includes(fileId) ? current : [...current, fileId]);
     setSidebarPanel(window.innerWidth <= 650 ? null : "explorer");
-    setProjectTab("overview");
     const file = workspaceFiles.find((item) => item.id === fileId);
     setStatusMessage(file ? `${file.file} açıldı` : "Dosya açıldı");
   };
@@ -494,9 +644,9 @@ export default function Home() {
   const closeFile = (fileId: string) => {
     const remaining = openFiles.filter((file) => file !== fileId);
     if (activeFile === fileId) {
-      setActiveFile(remaining.at(-1) ?? "index.tsx");
+      setActiveFile(remaining.at(-1) ?? "about.md");
     }
-    setOpenFiles(remaining.length > 0 ? remaining : ["index.tsx"]);
+    setOpenFiles(remaining.length > 0 ? remaining : ["about.md"]);
   };
 
   const filteredFiles = workspaceFiles.filter((file) =>
@@ -572,24 +722,33 @@ export default function Home() {
   ];
 
   useEffect(() => {
-    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-    if (motionPreference.matches) {
+    if (activeFile !== "index.tsx") {
       return;
     }
 
-    const timeout = window.setTimeout(() => setOpeningPhase("transition"), 5600);
-    return () => window.clearTimeout(timeout);
-  }, []);
-
-  useEffect(() => {
-    if (openingPhase !== "transition") {
+    const root = editorContentRef.current;
+    if (!root) {
       return;
     }
 
-    const timeout = window.setTimeout(() => setOpeningPhase("done"), 950);
-    return () => window.clearTimeout(timeout);
-  }, [openingPhase]);
+    const cards = root.querySelectorAll<HTMLElement>(".project-card");
+    if (!("IntersectionObserver" in window)) {
+      cards.forEach((card) => card.classList.add("is-revealed"));
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries, currentObserver) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-revealed");
+          currentObserver.unobserve(entry.target);
+        }
+      });
+    }, { root, threshold: 0.12 });
+
+    cards.forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, [activeFile]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -612,21 +771,9 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
 
-  const isOpening = openingPhase !== "done";
-
   return (
-    <>
-      {isOpening && (
-        <OpeningSequence
-          isClosing={openingPhase === "transition"}
-          onSkip={() => setOpeningPhase("transition")}
-          frameStyle={frameStyle}
-          isResized={editorRect !== null}
-          resizeHandles={resizeHandles}
-        />
-      )}
       <main
-        className={`ide-shell${openingPhase === "intro" ? " ide-shell--loading" : ""}${openingPhase === "transition" ? " ide-shell--revealing" : ""}${editorRect ? " ide-shell--user-sized" : ""}`}
+        className={`ide-shell${editorRect ? " ide-shell--user-sized" : ""}`}
         data-theme={colorTheme}
         id="top"
         style={frameStyle}
@@ -860,7 +1007,6 @@ export default function Home() {
                   <div className={`editor-tab${activeFile === file.id ? " editor-tab--active" : ""}`} key={file.id}>
                     <button className="editor-tab-select" type="button" onClick={() => {
                       setActiveFile(file.id);
-                      setProjectTab("overview");
                     }}>
                       <span className={`file-mark${file.kind === "md" ? " file-mark--md" : ""}`}>{file.kind === "md" ? "M" : "TS"}</span>
                       {file.file}
@@ -880,11 +1026,13 @@ export default function Home() {
             <div
               className="editor-content"
               data-line-numbers={lineNumbersVisible}
+              ref={editorContentRef}
               style={{ "--editor-font-size": `${editorFontSize}px` } as CSSProperties}
             >
               {activeWorkspaceFile.id === "index.tsx" && (
                 <>
               <section className="intro-panel" id="about">
+                <AmbientCanvas />
                 <div className="intro-meta">
                   <span className="code-comment">{"// MERHABA, BEN İREM"}</span>
                   <span className="availability"><i /> yeni fikirlere açık</span>
@@ -974,24 +1122,8 @@ export default function Home() {
               {activeWorkspaceFile.project && (
                 <article className="document-view project-document">
                   <div className="document-fileline"><span className="file-mark">TS</span> {activeWorkspaceFile.project.file}</div>
-                  <div className="project-story-tabs" role="tablist" aria-label={`${activeWorkspaceFile.project.name} proje detayları`}>
-                    {([
-                      ["overview", "Genel bakış"],
-                      ["preview", "Görsel konsept"],
-                      ["stack", "Teknolojiler"],
-                    ] as const).map(([tab, label]) => (
-                      <button
-                        aria-selected={projectTab === tab}
-                        className={projectTab === tab ? "project-story-tab project-story-tab--active" : "project-story-tab"}
-                        key={tab}
-                        onClick={() => setProjectTab(tab)}
-                        role="tab"
-                        type="button"
-                      >{label}</button>
-                    ))}
-                  </div>
-                  {projectTab === "overview" && (
-                    <div className="project-story-panel" role="tabpanel">
+                  <div className="project-story-flow">
+                    <section className="project-story-section">
                       <span className="code-comment">{"// SELECTED PROJECT"}</span>
                       <h1>{activeWorkspaceFile.project.name}<span className="code-orange">.</span></h1>
                       <p>{activeWorkspaceFile.project.detail}</p>
@@ -999,26 +1131,34 @@ export default function Home() {
                         <span className="story-note-mark">✳</span>
                         <span><strong>Proje notu</strong><small>Bu çalışma, küçük bir fikri yalın ve keyifli bir dijital deneyime dönüştürme arayışının parçası.</small></span>
                       </div>
-                      <p className="document-comment">{"// Proje hakkında doğrulanmış ek bilgi ve bağlantı bulunmuyor."}</p>
-                    </div>
-                  )}
-                  {projectTab === "preview" && (
-                    <div className="project-story-panel" role="tabpanel">
-                      <div className="preview-disclaimer"><span>✦</span> Görsel konsept · gerçek ürün ekran görüntüsü değildir</div>
-                      <ProjectPreview project={activeWorkspaceFile.project} />
-                    </div>
-                  )}
-                  {projectTab === "stack" && (
-                    <div className="project-story-panel" role="tabpanel">
+                    </section>
+                    <section className="project-story-section">
+                      <div className="preview-disclaimer"><span>✦</span> {activeWorkspaceFile.project.name === "Günlük" || activeWorkspaceFile.project.name === "Saat" ? "Görsel kimlik · renk paleti ve tipografi" : "Görsel konsept · gerçek ürün ekran görüntüsü değildir"}</div>
+                      {activeWorkspaceFile.project.name === "Günlük" ? (
+                        <DiaryVisualConcept />
+                      ) : activeWorkspaceFile.project.name === "Saat" ? (
+                        <ClockVisualConcept />
+                      ) : (
+                        <ProjectPreview project={activeWorkspaceFile.project} />
+                      )}
+                    </section>
+                    <section className="project-story-section project-story-stack">
                       <h2>Teknolojiler</h2>
                       <div className="project-tags">
                         {activeWorkspaceFile.project.tags.map((tag) => (
                           <span className={tag === "Teknoloji bilgisi bekleniyor" ? "project-tag project-tag--pending" : "project-tag"} key={tag}>{tag}</span>
                         ))}
                       </div>
-                      <p className="document-comment">{"// Bilgisi doğrulanmayan teknoloji isimleri eklenmedi."}</p>
-                    </div>
-                  )}
+                      {activeWorkspaceFile.project.tags.includes("Teknoloji bilgisi bekleniyor") && (
+                        <p className="document-comment">{"// Bilgisi doğrulanmayan teknolojiler eklenmedi."}</p>
+                      )}
+                    </section>
+                    {activeWorkspaceFile.project.url && (
+                      <a className="project-live-link" href={activeWorkspaceFile.project.url} target="_blank" rel="noopener noreferrer">
+                        {activeWorkspaceFile.project.linkLabel ?? `${activeWorkspaceFile.project.name}’ü ziyaret et`} <span aria-hidden="true">↗</span>
+                      </a>
+                    )}
+                  </div>
                 </article>
               )}
 
@@ -1042,6 +1182,5 @@ export default function Home() {
         {resizeHandles}
         {commandPaletteOpen && <CommandPalette commands={commands} onClose={() => setCommandPaletteOpen(false)} />}
       </main>
-    </>
   );
 }
